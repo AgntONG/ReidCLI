@@ -32,10 +32,12 @@ from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import ANSI, to_formatted_text
+from prompt_toolkit.formatted_text.utils import split_lines
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.text import Text
@@ -123,16 +125,27 @@ class _Block:
 class _OutputPane:
     """Accumulated blocks for the scrollable output window.
 
-    A trailing `[SetCursorPosition]` sentinel is prompt_toolkit's documented
-    mechanism (see widgets.base.Label) for telling a Window where its
-    "cursor" is; the renderer auto-scrolls to keep it visible, giving
-    tail-to-bottom behavior for free without fighting the renderer's own
-    per-frame scroll recomputation.
+    Tail-to-bottom auto-follow uses prompt_toolkit's documented
+    `[SetCursorPosition]` sentinel mechanism (see widgets.base.Label): the
+    renderer scrolls to keep whichever fragment carries that marker visible.
+    Scrolling manually (PageUp/PageDown, mouse wheel) works by *relocating*
+    that marker to the target line rather than fighting the renderer's
+    per-frame scroll recomputation — `Window._scroll_up/_down` (used by the
+    default page-navigation bindings and the default mouse wheel handler)
+    only adjust `vertical_scroll` directly, which gets silently overwritten
+    right back by that same per-frame recomputation as long as the marker
+    stays fixed at the bottom; relocating the marker is what actually moves
+    the view. While `pinned` is True (the default, and whenever scrolled back
+    down to the last line) the marker tracks the newest line automatically —
+    "locked to bottom" exactly as before. Scrolling up unpins so new output
+    appends below the fold without disturbing what's being read.
     """
 
     def __init__(self) -> None:
         self._blocks: list[_Block] = []
         self.expanded = False  # global Ctrl+O toggle for collapsible blocks
+        self.pinned = True
+        self._cursor_line = 0  # only meaningful while not pinned
 
     def append_static(self, ansi_text: str) -> None:
         if not ansi_text:
@@ -152,16 +165,72 @@ class _OutputPane:
 
     def reset(self) -> None:
         self._blocks = []
+        self.pinned = True
+        self._cursor_line = 0
 
-    def get_fragments(self):  # type: ignore[no-untyped-def]
+    def _all_fragments(self):  # type: ignore[no-untyped-def]
         out: list = []
         for block in self._blocks:
             if block.is_collapsible:
                 out.extend(block.expanded if self.expanded else block.collapsed)
             else:
                 out.extend(block.fragments)
-        out.append(("[SetCursorPosition]", ""))
         return out
+
+    def scroll_up(self, lines: int = 3) -> None:
+        total = max(1, len(list(split_lines(self._all_fragments()))))
+        base = (total - 1) if self.pinned else self._cursor_line
+        self._cursor_line = max(0, base - lines)
+        self.pinned = False
+
+    def scroll_down(self, lines: int = 3) -> None:
+        if self.pinned:
+            return
+        total = max(1, len(list(split_lines(self._all_fragments()))))
+        self._cursor_line = min(total - 1, self._cursor_line + lines)
+        if self._cursor_line >= total - 1:
+            self.pinned = True
+
+    def get_fragments(self):  # type: ignore[no-untyped-def]
+        lines = list(split_lines(self._all_fragments()))
+        total = len(lines)
+        if total == 0:
+            return [("[SetCursorPosition]", "")]
+
+        target = (total - 1) if self.pinned else min(self._cursor_line, total - 1)
+        out: list = []
+        for i, line in enumerate(lines):
+            if i == target:
+                out.append(("[SetCursorPosition]", ""))
+            out.extend(line)
+            if i != total - 1:
+                out.append(("", "\n"))
+        return out
+
+
+class _ScrollableOutputControl(FormattedTextControl):
+    """FormattedTextControl that routes mouse wheel scroll to callbacks.
+
+    The default `Window._mouse_handler` fallback for scroll events just
+    nudges `vertical_scroll` by +-1, which is exactly what gets fought and
+    reverted by the cursor-follow recomputation described on `_OutputPane`.
+    Intercepting here lets scroll wheel drive the same marker-relocation
+    logic as the PageUp/PageDown key bindings.
+    """
+
+    def __init__(self, get_fragments, on_scroll_up, on_scroll_down, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(get_fragments, **kwargs)
+        self._on_scroll_up = on_scroll_up
+        self._on_scroll_down = on_scroll_down
+
+    def mouse_handler(self, mouse_event: MouseEvent):  # type: ignore[no-untyped-def]
+        if mouse_event.event_type == MouseEventType.SCROLL_UP:
+            self._on_scroll_up()
+            return None
+        if mouse_event.event_type == MouseEventType.SCROLL_DOWN:
+            self._on_scroll_down()
+            return None
+        return super().mouse_handler(mouse_event)
 
 
 class ChatApp:
@@ -186,7 +255,7 @@ class ChatApp:
             key_bindings=self._build_key_bindings(),
             style=_STYLE,
             full_screen=True,
-            mouse_support=False,
+            mouse_support=True,
         )
 
     # --- setup -----------------------------------------------------------
@@ -276,6 +345,16 @@ class ChatApp:
         if self.app.is_running:
             self.app.invalidate()
 
+    # --- scrolling (mouse wheel only) ---------------------------------------
+
+    def _scroll_up(self) -> None:
+        self.output.scroll_up(3)
+        self.app.invalidate()
+
+    def _scroll_down(self) -> None:
+        self.output.scroll_down(3)
+        self.app.invalidate()
+
     # --- status / spinner content -----------------------------------------
 
     def _estimate_tokens(self) -> int:
@@ -326,7 +405,7 @@ class ChatApp:
         mode = status.get("mode", "—")
         mode_color = _MODE_COLOR.get(mode, "#9e9e9e")
         sep = ("#6c6c6c", "  ·  ")
-        return [
+        frags = [
             ("#ff5f5f bold", f"  {APP_NAME}"), sep,
             (f"{mode_color} bold", mode), sep,
             ("#9e9e9e", status.get("model", "—")), sep,
@@ -335,6 +414,9 @@ class ChatApp:
             ("#9e9e9e", short_path(status.get("workspace", "—"))), sep,
             ("#9e9e9e", f"{status.get('tasks', 0)} tasks"),
         ]
+        if not self.output.pinned:
+            frags += [sep, ("#ffd75f bold", "scrolled ↑ (scroll down to return)")]
+        return frags
 
     def _spinner_fragments(self):  # type: ignore[no-untyped-def]
         # Same rationale as _status_fragments: this runs every redraw with no
@@ -370,7 +452,12 @@ class ChatApp:
 
     def _build_layout(self) -> Layout:
         output_window = Window(
-            content=FormattedTextControl(self.output.get_fragments, focusable=False),
+            content=_ScrollableOutputControl(
+                self.output.get_fragments,
+                on_scroll_up=self._scroll_up,
+                on_scroll_down=self._scroll_down,
+                focusable=False,
+            ),
             wrap_lines=True,
         )
         spinner_window = Window(content=FormattedTextControl(self._spinner_fragments), height=1)
