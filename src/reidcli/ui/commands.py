@@ -34,7 +34,7 @@ SLASH_COMMANDS: list[tuple[str, str, str, str]] = [
     ("/transcript", "[n]", "show last n messages (default 20)", "Session"),
     ("/rewind", "", "drop the last turn from state", "Session"),
     ("/tasks", "[status]", "list tasks (filter: pending|active|completed|failed|blocked)", "Tasks"),
-    ("/goal", "<new|list|show|active|outcome|evidence|add|milestone|done|block|revise|abandon|delete> ...", "manage session goals", "Goals"),
+    ("/goal", "<subcommand> ...", "manage session goals (type '/goal ' for subcommands)", "Goals"),
     ("/model", "<name>", "set model for the session", "Config & Policy"),
     ("/effort", "<level>", "set reasoning effort (low|medium|high|xhigh)", "Config & Policy"),
     ("/mode", "<mode>", "set permission mode (strict|balanced|autonomous|custom)", "Config & Policy"),
@@ -75,6 +75,38 @@ GOAL_SUBCOMMANDS: list[tuple[str, str, str]] = [
     ("abandon", "[id] <reason>", "abandon a goal or node"),
     ("delete", "<id>", "delete a goal"),
 ]
+
+
+# Fixed value choices for commands whose argument is a small enum. The "/"
+# completion menu offers these the moment you type "/<cmd> " — the same way
+# "/goal " lists its subcommands — so you never have to remember the valid
+# values. (command -> list of (value, description).) Kept here beside
+# SLASH_COMMANDS so the menu and the code that parses these stay in sync.
+ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
+    "/effort": [
+        ("low", "minimal reasoning, fastest"),
+        ("medium", "balanced reasoning (default)"),
+        ("high", "deeper reasoning, slower"),
+        ("xhigh", "maximum reasoning"),
+    ],
+    "/mode": [
+        ("strict", "confirm every action"),
+        ("balanced", "confirm only risky actions"),
+        ("autonomous", "run without confirmations"),
+        ("custom", "use custom policy gates"),
+    ],
+    "/nyx": [
+        ("on", "enable Nyx redteam/offensive-security persona"),
+        ("off", "disable Nyx persona"),
+    ],
+    "/tasks": [
+        ("pending", "show pending tasks"),
+        ("active", "show active tasks"),
+        ("completed", "show completed tasks"),
+        ("failed", "show failed tasks"),
+        ("blocked", "show blocked tasks"),
+    ],
+}
 
 
 def _build_help() -> Group:

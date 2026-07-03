@@ -37,11 +37,12 @@ from prompt_toolkit.formatted_text.utils import split_lines
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
-from prompt_toolkit.layout import Float, FloatContainer, HSplit, Layout, VSplit, Window
+from prompt_toolkit.layout import Float, FloatContainer, HSplit, Layout, ScrollOffsets, VSplit, Window
 from prompt_toolkit.layout.containers import ConditionalContainer
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
+from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.text import Text
 
@@ -51,6 +52,7 @@ from reidcli.runtime.orchestrator import Orchestrator
 from reidcli.ui import render
 from reidcli.ui.commands import (
     _EFFORT_LEVELS,
+    ARG_CHOICES,
     GOAL_SUBCOMMANDS,
     SLASH_COMMANDS,
     WORKFLOW_SUBCOMMANDS,
@@ -97,6 +99,27 @@ _MODE_COLOR = {
     "autonomous": "#5fd75f",
     "custom": "#d75fd7",
 }
+
+# Themed style for the "/" completion menu + its scrollbar. Without this,
+# prompt_toolkit falls back to its built-in grey/blue menu (which clashes with
+# the red skin and renders black-on-grey descriptions). Classes map to the
+# fragments menus.py emits; output-pane/status fragments carry absolute colors
+# so this global style never touches them.
+_MENU_BG = "#1c1c1c"
+_MENU_BG_ALT = "#262626"
+_UI_STYLE = Style.from_dict(
+    {
+        "completion-menu": f"bg:{_MENU_BG} {PRIMARY}",
+        "completion-menu.completion": f"bg:{_MENU_BG} #d0d0d0",
+        "completion-menu.completion.current": f"bg:{PRIMARY} {_MENU_BG} bold",
+        "completion-menu.meta.completion": f"bg:{_MENU_BG_ALT} #8a8a8a",
+        "completion-menu.meta.completion.current": f"bg:#d75f5f {_MENU_BG}",
+        # Scrollbar shown when the command list overflows the menu height.
+        "scrollbar.background": f"bg:{_MENU_BG_ALT}",
+        "scrollbar.button": f"bg:{PRIMARY}",
+        "scrollbar.arrow": f"bg:{_MENU_BG} {PRIMARY}",
+    }
+)
 
 
 class _ConsoleCapture:
@@ -215,17 +238,34 @@ class _OutputPane:
         if self._cursor_line >= total - 1:
             self.pinned = True
 
+    def scroll_to_top(self) -> None:
+        self._cursor_line = 0
+        self.pinned = False
+
+    def scroll_to_bottom(self) -> None:
+        self.pinned = True
+
+    def bottom_line(self, total: int) -> int:
+        """Logical line index that should sit at the bottom of the viewport.
+
+        Pinned tracks the newest line; otherwise it's the scrolled-to cursor.
+        `_OutputWindow` turns this into a concrete (wrap-aware) vertical scroll.
+        """
+        if total <= 0:
+            return 0
+        return (total - 1) if self.pinned else min(self._cursor_line, total - 1)
+
     def get_fragments(self):  # type: ignore[no-untyped-def]
+        # No [SetCursorPosition] marker: `_OutputWindow` computes the vertical
+        # scroll directly from `bottom_line`, which gives continuous,
+        # bottom-anchored scrolling that offset/cursor tricks can't (the
+        # renderer refuses to leave blank space below the last line).
         lines = list(split_lines(self._all_fragments()))
         total = len(lines)
         if total == 0:
-            return [("[SetCursorPosition]", "")]
-
-        target = (total - 1) if self.pinned else min(self._cursor_line, total - 1)
+            return []
         out: list = []
         for i, line in enumerate(lines):
-            if i == target:
-                out.append(("[SetCursorPosition]", ""))
             out.extend(line)
             if i != total - 1:
                 out.append(("", "\n"))
@@ -255,6 +295,49 @@ class _ScrollableOutputControl(FormattedTextControl):
             self._on_scroll_down()
             return None
         return super().mouse_handler(mouse_event)
+
+
+class _OutputWindow(Window):
+    """Output pane that computes its own vertical scroll from the pane state.
+
+    prompt_toolkit's built-in scrolling keeps a cursor/marker merely *visible*
+    with minimal movement, which produces a dead-zone (the view doesn't move
+    for the first few scroll steps out of the pinned bottom, then jumps and
+    re-anchors to the top). Forcing it with scroll offsets instead pushes short
+    content — like the startup banner — off the top of the pane.
+
+    Overriding the wrap-aware scroll pass lets us bottom-anchor a chosen line
+    directly: `_OutputPane.bottom_line` picks the logical line that should sit
+    on the last row, and we walk up (honoring line wrapping) to find the top
+    line. Short content lands at scroll 0 (top-aligned); overflowing content is
+    bottom-anchored; scrolling moves the view by exactly the requested lines
+    with no jump.
+    """
+
+    def __init__(self, pane: "_OutputPane", **kwargs) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(**kwargs)
+        self._pane = pane
+
+    def _scroll_when_linewrapping(self, ui_content, width, height):  # type: ignore[no-untyped-def]
+        self.horizontal_scroll = 0
+        self.vertical_scroll_2 = 0
+        total = ui_content.line_count
+        if total <= 0 or width <= 0 or height <= 0:
+            self.vertical_scroll = 0
+            return
+
+        bottom = min(self._pane.bottom_line(total), total - 1)
+
+        # Walk up from the bottom-anchored line, summing wrapped heights, until
+        # the viewport is full; the last line that still fits is the top.
+        used = 0
+        top = bottom
+        for lineno in range(bottom, -1, -1):
+            used += ui_content.get_height_for_line(lineno, width, self.get_line_prefix)
+            if used > height:
+                break
+            top = lineno
+        self.vertical_scroll = top
 
 
 class SlashCommandCompleter(Completer):
@@ -289,6 +372,20 @@ class SlashCommandCompleter(Completer):
                     display = f"{name} {args}".rstrip()
                     yield Completion(name, start_position=-len(prefix), display=display, display_meta=desc)
             return
+
+        # Enum-valued commands: "/effort " -> low|medium|high|xhigh, etc. Offers
+        # the choice list from ARG_CHOICES as soon as the command + space is
+        # typed, so values don't have to be memorized.
+        for cmd, choices in ARG_CHOICES.items():
+            marker = f"{cmd} "
+            if text.startswith(marker):
+                arg = text[len(marker) :]
+                if " " in arg:
+                    return
+                for value, desc in choices:
+                    if value.startswith(arg):
+                        yield Completion(value, start_position=-len(arg), display=value, display_meta=desc)
+                return
 
         word = text[1:]
         if " " in word:
@@ -329,6 +426,7 @@ class ChatApp:
             key_bindings=self._build_key_bindings(),
             full_screen=True,
             mouse_support=True,
+            style=_UI_STYLE,
         )
 
     # --- setup -----------------------------------------------------------
@@ -619,7 +717,8 @@ class ChatApp:
     # --- layout --------------------------------------------------------
 
     def _build_layout(self) -> Layout:
-        output_window = Window(
+        output_window = _OutputWindow(
+            self.output,
             content=_ScrollableOutputControl(
                 self.output.get_fragments,
                 on_scroll_up=self._scroll_up,
@@ -673,7 +772,13 @@ class ChatApp:
         # above/below the box as you type, instead of requiring /help.
         floated = FloatContainer(
             content=root,
-            floats=[Float(xcursor=True, ycursor=True, content=CompletionsMenu(max_height=10, scroll_offset=1))],
+            floats=[
+                Float(
+                    xcursor=True,
+                    ycursor=True,
+                    content=CompletionsMenu(max_height=10, scroll_offset=1, display_arrows=True),
+                )
+            ],
         )
         return Layout(floated, focused_element=input_window)
 
@@ -736,6 +841,29 @@ class ChatApp:
         @kb.add("c-o")
         def _toggle_collapse(event) -> None:  # type: ignore[no-untyped-def]
             self.output.toggle_expanded()
+            self.app.invalidate()
+
+        # Keyboard scrollback for the transcript pane. A page is roughly the
+        # output window's height; we don't have it here without the renderer,
+        # so a fixed page of 15 lines keeps PageUp/PageDown predictable.
+        @kb.add("pageup", filter=~is_approving)
+        def _page_up(event) -> None:  # type: ignore[no-untyped-def]
+            self.output.scroll_up(15)
+            self.app.invalidate()
+
+        @kb.add("pagedown", filter=~is_approving)
+        def _page_down(event) -> None:  # type: ignore[no-untyped-def]
+            self.output.scroll_down(15)
+            self.app.invalidate()
+
+        @kb.add("s-up", filter=~is_approving)
+        def _line_up(event) -> None:  # type: ignore[no-untyped-def]
+            self.output.scroll_up(1)
+            self.app.invalidate()
+
+        @kb.add("s-down", filter=~is_approving)
+        def _line_down(event) -> None:  # type: ignore[no-untyped-def]
+            self.output.scroll_down(1)
             self.app.invalidate()
 
         @kb.add(Keys.BracketedPaste, filter=~is_approving)
