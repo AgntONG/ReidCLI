@@ -1,6 +1,6 @@
 [project]
 name = "reidcli"
-version = "2.0.1"
+version = "2.0.5"
 description = "Terminal-native personal intelligence and coding CLI (agent-first runtime)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -31,7 +31,7 @@ packages = ["src/reidcli"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py311"
 src = ["src"]
 
 [tool.ruff.lint]

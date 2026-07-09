@@ -2,7 +2,7 @@
 
 A Claude-Code-style skin: a rounded welcome box, ⏺ bullets for assistant turns
 and tool calls, ⎿ connectors for tool results, and a low-noise status line.
-Rendered in ReidVerse-Cli's red palette. Assistant output stays markdown with
+Rendered in ReidSH's red palette. Assistant output stays markdown with
 syntax highlighting; tool calls hang under a bullet with their result.
 """
 from __future__ import annotations

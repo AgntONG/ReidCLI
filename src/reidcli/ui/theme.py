@@ -1,6 +1,6 @@
 """Centralized theme: colors, styles, and visual constants.
 
-ReidVerse-Cli wears a Claude-Code-style skin in a red palette:
+ReidSH wears a Claude-Code-style skin in a red palette:
   - dark technical feel, high contrast
   - rounded borders, ⏺ bullets, ⎿ tree connectors
   - clean density over decorative excess
@@ -15,7 +15,7 @@ from rich import box
 from rich.text import Text
 
 # Brand.
-APP_NAME = "ReidVerse-Cli"
+APP_NAME = "ReidSH"
 
 # Core palette — red-forward, high-contrast.
 PRIMARY = "#ff5f5f"       # brand, assistant, headers  (brand red)

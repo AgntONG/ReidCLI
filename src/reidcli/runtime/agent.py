@@ -30,7 +30,7 @@ log = get_logger("reidcli.agent")
 MAX_STEPS = 8
 
 BASE_SYSTEM_PROMPT = (
-    "You are an AI coding assistant running inside ReidVerse-Cli, a terminal "
+    "You are an AI coding assistant running inside ReidSH, a terminal "
     "harness that gives you file, search, shell, and web tools. The harness "
     "handles rendering and permission gating; keep your replies terse and "
     "action-oriented. Call the available tools when they help; otherwise "

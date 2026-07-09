@@ -68,7 +68,7 @@ reid doctor
 Expected output:
 
 ```
-reid 2.0.1
+reid 2.0.5
 settings  <path> (found|missing)
 python    <path> (3.13.x)
 workspace <cwd>
