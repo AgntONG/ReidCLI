@@ -9,7 +9,7 @@ function main() {
   if (!python) {
 console.error(
       "reid: no Python 3.12+ interpreter found on PATH.\n" +
-        "Install Python (https://www.python.org/downloads/) and re-run `npm install -g reid-cli`."
+        "Install Python (https://www.python.org/downloads/) and re-run `npm install -g reidsh`."
     );
     process.exit(1);
   }

@@ -1,12 +1,12 @@
 {
-  "name": "reid-cli",
+  "name": "reidsh",
   "version": "2.0.1",
   "description": "Terminal-native personal intelligence and coding CLI (agent-first runtime)",
   "keywords": [
     "cli",
     "agent",
     "ai",
-    "reidcli",
+    "reidsh",
     "terminal"
   ],
   "homepage": "https://github.com/AgntONG/ReidCLI#readme",
@@ -22,8 +22,8 @@
   "type": "commonjs",
   "main": "index.js",
   "bin": {
-    "reid": "bin/reid-cli.js",
-    "reid-cli": "bin/reid-cli.js"
+    "reid": "bin/reidsh.js",
+    "reidsh": "bin/reidsh.js"
   },
   "directories": {
     "doc": "docs",

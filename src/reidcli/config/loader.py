@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 from reidcli.config.models import Config, default_config
-from reidcli.config.settings import apply_settings_env, read_reidcli_block
+from reidcli.config.settings import apply_settings_env, read_reidsh_block
 from reidcli.diagnostics.logger import get_logger
 
 log = get_logger("reidcli.config")
@@ -32,19 +32,19 @@ def _read_json(path: Path) -> dict:
 
 def _env_overrides() -> dict:
     overrides: dict = {}
-    provider = os.environ.get("REIDCLI_PROVIDER")
+    provider = os.environ.get("REIDSH_PROVIDER")
     if provider:
         overrides["default_provider"] = provider
-    workspace = os.environ.get("REIDCLI_WORKSPACE")
+    workspace = os.environ.get("REIDSH_WORKSPACE")
     if workspace:
         overrides["workspace_root"] = workspace
-    storage = os.environ.get("REIDCLI_STORAGE")
+    storage = os.environ.get("REIDSH_STORAGE")
     if storage:
         overrides["storage_root"] = storage
-    mode = os.environ.get("REIDCLI_PERMISSION_MODE")
+    mode = os.environ.get("REIDSH_PERMISSION_MODE")
     if mode:
         overrides.setdefault("policy", {})["default_mode"] = mode
-    log_level = os.environ.get("REIDCLI_LOG_LEVEL")
+    log_level = os.environ.get("REIDSH_LOG_LEVEL")
     if log_level:
         overrides["log_level"] = log_level
     return overrides
@@ -74,10 +74,10 @@ class ConfigLoader:
         data = default_config().model_dump(mode="json")
         data = _deep_merge(data, _read_json(self.global_dir / CONFIG_FILENAME))
         data = _deep_merge(data, _read_json(self.project_dir / CONFIG_FILENAME))
-        # Claude-Code-shaped settings.json (`reidcli` block) — sits above
+        # Claude-Code-shaped settings.json (`reidsh` block) — sits above
         # .reidcli/config.json so the project's baked-in settings file wins
         # over an older on-disk config; env vars still win over both.
-        data = _deep_merge(data, read_reidcli_block())
+        data = _deep_merge(data, read_reidsh_block())
         data = _deep_merge(data, _env_overrides())
 
         cfg = Config.model_validate(data)

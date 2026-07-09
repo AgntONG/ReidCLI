@@ -1,14 +1,14 @@
 """Claude-Code-style settings file support.
 
 A settings.json holds an `env` block (applied to os.environ before any provider
-reads credentials) and an optional `reidcli` block (project-baked ReidCLI
+reads credentials) and an optional `reidsh` block (project-baked Reidsh
 configuration — default_provider, policy, providers, etc.). Same file shape as
-Claude Code's settings.json so existing files work as-is; ReidCLI-specific
-config lives under `reidcli` so unknown keys (`theme`, `effortLevel`, ...) are
+Claude Code's settings.json so existing files work as-is; Reidsh-specific
+config lives under `reidsh` so unknown keys (`theme`, `effortLevel`, ...) are
 ignored harmlessly.
 
 Path resolution (first hit wins):
-  1. $REIDCLI_SETTINGS                (explicit override)
+  1. $REIDSH_SETTINGS                (explicit override)
   2. ./settings.json                   (project-local, when it exists)
   3. ~/.reidcli/settings.json          (global default)
 """
@@ -29,7 +29,7 @@ PROJECT_SETTINGS_FILENAME = "settings.json"
 def _walk_upward_for_project_settings(start: Path) -> Path | None:
     """Walk from `start` toward the filesystem root looking for settings.json.
 
-    Mirrors how git finds `.git` — so launching `reid-cli` from any
+    Mirrors how git finds `.git` — so launching `reidsh` from any
     subdirectory of a project still finds that project's baked-in
     settings.json. Stops at the root (path.parent == path).
     """
@@ -51,14 +51,14 @@ def settings_path() -> Path:
     """Resolve the settings file path (first hit wins).
 
     Order:
-      1. $REIDCLI_SETTINGS                    (explicit override)
+      1. $REIDSH_SETTINGS                    (explicit override)
       2. project settings.json (walk upward from CWD)
       3. ~/.reidcli/settings.json              (global default)
 
     Returns the last fallback even if it doesn't exist, so `doctor` can
     report it as "missing" rather than crashing on a None.
     """
-    override = os.environ.get("REIDCLI_SETTINGS", "").strip()
+    override = os.environ.get("REIDSH_SETTINGS", "").strip()
     if override:
         return Path(override)
     project = _walk_upward_for_project_settings(Path.cwd())
@@ -105,13 +105,13 @@ def apply_settings_env(path: Path | None = None) -> dict[str, str]:
     return applied
 
 
-def read_reidcli_block(path: Path | None = None) -> dict:
-    """Return the settings file's `reidcli` block, or {} if absent.
+def read_reidsh_block(path: Path | None = None) -> dict:
+    """Return the settings file's `reidsh` block, or {} if absent.
 
     Loader merges this into Config below the env-var overrides but above the
     on-disk .reidcli/config.json, so `settings.json` is the project's baked-in
     source of truth for anything that isn't an env credential.
     """
     data = _read_settings(path)
-    block = data.get("reidcli")
+    block = data.get("reidsh")
     return block if isinstance(block, dict) else {}
