@@ -38,7 +38,7 @@ Requires Python 3.12+ on your `PATH` (the npm package is a thin wrapper that
 pip-installs the Python package on `npm install`).
 
 ```powershell
-npm install -g reid
+npm install -g reidai
 ```
 
 This gives you both `reid` and `reidcli` on your `PATH`. Skip to
