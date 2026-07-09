@@ -10,16 +10,15 @@ from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import to_formatted_text
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import Float, FloatContainer, HSplit, Layout, VSplit, Window
 from prompt_toolkit.layout.containers import ConditionalContainer
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.styles import Style
-from prompt_toolkit.widgets import Box, Button, Frame
+from prompt_toolkit.widgets import Frame
 
 from reidcli.provider.popular import POPULAR_PROVIDERS
-from reidcli.ui.theme import BOX, DANGER, DIM, PRIMARY, SUCCESS, WARN
+from reidcli.ui.theme import PRIMARY
 
 PICKER_BG = "#0d0d0d"
 PICKER_CARD_BG = "#161616"
@@ -150,8 +149,8 @@ class ProviderCompleter(Completer):
             )
 
 
-class CustomProviderForm:
-    FIELDS = [
+class ProviderPicker:
+    CUSTOM_FIELD_SPECS = [
         ("name", "Provider Name", "my-provider", "Unique name (e.g., 'my-llama', 'company-gpt')"),
         ("kind", "Provider Kind", "openai-compatible", "anthropic | openai | openai-compatible | ollama"),
         ("base_url", "Base URL", "https://api.example.com/v1", "API endpoint (empty for defaults)"),
@@ -159,90 +158,6 @@ class CustomProviderForm:
         ("default_model", "Default Model", "model-name", "Default model (e.g., 'llama-3.1-70b')"),
     ]
 
-    def __init__(self, on_submit: Callable[[dict], None], on_cancel: Callable[[], None]) -> None:
-        self.on_submit = on_submit
-        self.on_cancel = on_cancel
-        self.current_field = 0
-        self.buffers = {}
-        self._build_ui()
-
-    def _build_ui(self) -> None:
-        for field_id, label, default, help_text in self.FIELDS:
-            buf = Buffer()
-            if default:
-                buf.text = default
-            self.buffers[field_id] = buf
-
-        field_rows = []
-        for i, (field_id, label, default, help_text) in enumerate(self.FIELDS):
-            is_password = field_id == "api_key"
-
-            def make_prompt(fid=field_id, lbl=label):
-                is_sel = self.current_field == self.FIELDS.index((fid, lbl, default, help_text))
-                prefix = "▸ " if is_sel else "  "
-                style = "class:picker-title" if is_sel else "class:picker-footer"
-                return [(style, f"{prefix}{lbl}: ")]
-
-            prompt_control = FormattedTextControl(make_prompt)
-
-            field_window = Window(
-                content=BufferControl(buffer=self.buffers[field_id], focusable=True, password=is_password),
-                height=1,
-                style="class:picker-search",
-            )
-
-            def make_help(ht=help_text):
-                return [( "class:picker-subtitle", f"    {ht}")]
-
-            help_control = FormattedTextControl(make_help)
-            help_window = Window(content=help_control, height=1, style="class:picker-bg")
-
-            field_rows.append(HSplit([
-                Window(content=prompt_control, height=1, style="class:picker-bg"),
-                field_window,
-                help_window,
-            ]))
-
-        submit_btn = Button(text="✓ Save", handler=self._submit)
-        cancel_btn = Button(text="✕ Cancel", handler=self._cancel)
-
-        button_row = VSplit([
-            Window(width=2),
-            submit_btn,
-            Window(width=3),
-            cancel_btn,
-            Window(width=2),
-        ], height=1)
-
-        title_bar = Window(
-            content=FormattedTextControl(lambda: [("class:picker-title", "  ✦ Create Custom Provider  ")]),
-            height=1,
-            style="class:picker-card",
-        )
-
-        self.container = Frame(
-            body=HSplit([
-                title_bar,
-                Window(height=1, char="─", style="class:picker-border"),
-                *field_rows,
-                Window(height=1, style="class:picker-bg"),
-                button_row,
-            ]),
-            style="class:picker-border",
-        )
-
-    def _submit(self) -> None:
-        result = {fid: self.buffers[fid].text for fid, _, _, _ in self.FIELDS}
-        self.on_submit(result)
-
-    def _cancel(self) -> None:
-        self.on_cancel()
-
-    def __pt_container__(self):
-        return self.container
-
-
-class ProviderPicker:
     def __init__(self, on_select: Callable[[ProviderEntry], None], on_custom: Callable[[dict], None], on_cancel: Callable[[], None]) -> None:
         self.on_select = on_select
         self.on_custom = on_custom
@@ -252,31 +167,192 @@ class ProviderPicker:
         self.filtered_entries = list(self.entries)
         self.selected_index = 0
         self.search_query = ""
-        self.show_custom_form = False
-        self.custom_form: Optional[CustomProviderForm] = None
+        self.mode = "list"
+        self.custom_field_index = 0
+        self.custom_buffers: dict[str, Buffer] = {}
         self._anim_start = time.time()
-        self._app: Application | None = None
+        self._app: Optional[Application] = None
 
-        self._build_ui()
+        self._build_search_buffer()
+        self._build_custom_buffers()
         self._build_key_bindings()
 
-    def _build_ui(self) -> None:
+    def _build_search_buffer(self) -> None:
         self.search_buffer = Buffer()
-        self.search_control = BufferControl(buffer=self.search_buffer, focusable=True, lexer=None)
 
-        self.search_prompt = FormattedTextControl(
+    def _build_custom_buffers(self) -> None:
+        for field_id, label, default, help_text in self.CUSTOM_FIELD_SPECS:
+            buf = Buffer()
+            if default:
+                buf.text = default
+            self.custom_buffers[field_id] = buf
+
+    def _build_key_bindings(self) -> None:
+        self.kb = KeyBindings()
+
+        @self.kb.add("up")
+        def _up(event) -> None:
+            if self.mode != "list":
+                return
+            if self.selected_index > 0:
+                self.selected_index -= 1
+            event.app.invalidate()
+
+        @self.kb.add("down")
+        def _down(event) -> None:
+            if self.mode != "list":
+                return
+            max_idx = len(self.filtered_entries)
+            if self.selected_index < max_idx:
+                self.selected_index += 1
+            event.app.invalidate()
+
+        @self.kb.add("pageup")
+        def _page_up(event) -> None:
+            if self.mode != "list":
+                return
+            self.selected_index = max(0, self.selected_index - 8)
+            event.app.invalidate()
+
+        @self.kb.add("pagedown")
+        def _page_down(event) -> None:
+            if self.mode != "list":
+                return
+            self.selected_index = min(len(self.filtered_entries), self.selected_index + 8)
+            event.app.invalidate()
+
+        @self.kb.add("home")
+        def _home(event) -> None:
+            if self.mode != "list":
+                return
+            self.selected_index = 0
+            event.app.invalidate()
+
+        @self.kb.add("end")
+        def _end(event) -> None:
+            if self.mode != "list":
+                return
+            self.selected_index = len(self.filtered_entries)
+            event.app.invalidate()
+
+        @self.kb.add("enter")
+        def _enter(event) -> None:
+            if self.mode == "custom":
+                self._submit_custom()
+                event.app.exit()
+                return
+            if self.selected_index >= len(self.filtered_entries):
+                self.mode = "custom"
+                self.custom_field_index = 0
+                event.app.layout.focus(self.custom_buffers["name"])
+            elif self.filtered_entries:
+                self.on_select(self.filtered_entries[self.selected_index])
+                event.app.exit()
+            event.app.invalidate()
+
+        @self.kb.add("escape")
+        def _escape(event) -> None:
+            if self.mode == "custom":
+                self.mode = "list"
+                event.app.layout.focus(self.search_buffer)
+            else:
+                self.on_cancel()
+                event.app.exit()
+            event.app.invalidate()
+
+        @self.kb.add("c-c")
+        def _ctrl_c(event) -> None:
+            self.on_cancel()
+            event.app.exit()
+
+        def on_search_change(buf: Buffer) -> None:
+            self.search_query = buf.text
+            self._filter_entries()
+            self.selected_index = 0
+            if self._app:
+                self._app.invalidate()
+
+        self.search_buffer.on_text_changed += on_search_change
+
+        @self.kb.add("tab")
+        def _tab(event) -> None:
+            if self.mode == "custom":
+                self.custom_field_index = (self.custom_field_index + 1) % len(self.CUSTOM_FIELD_SPECS)
+                field_id = self.CUSTOM_FIELD_SPECS[self.custom_field_index][0]
+                event.app.layout.focus(self.custom_buffers[field_id])
+            else:
+                focused = event.app.layout.current_window
+                search_window = self._search_window
+                if focused == search_window:
+                    event.app.layout.focus(self._list_control)
+                else:
+                    event.app.layout.focus(self.search_buffer)
+
+        @self.kb.add("s-tab")
+        def _shift_tab(event) -> None:
+            if self.mode == "custom":
+                self.custom_field_index = (self.custom_field_index - 1) % len(self.CUSTOM_FIELD_SPECS)
+                field_id = self.CUSTOM_FIELD_SPECS[self.custom_field_index][0]
+                event.app.layout.focus(self.custom_buffers[field_id])
+            else:
+                focused = event.app.layout.current_window
+                search_window = self._search_window
+                if focused == search_window:
+                    event.app.layout.focus(self._list_control)
+                else:
+                    event.app.layout.focus(self.search_buffer)
+
+        @self.kb.add("/")
+        def _slash(event) -> None:
+            if self.mode != "custom":
+                event.app.layout.focus(self.search_buffer)
+
+    def _filter_entries(self) -> None:
+        query = self.search_query.lower().strip()
+        if not query:
+            self.filtered_entries = list(self.entries)
+        else:
+            self.filtered_entries = [
+                e for e in self.entries
+                if (query in e.name.lower() or
+                    query in e.kind.lower() or
+                    query in e.description.lower() or
+                    query in e.default_model.lower())
+            ]
+        if self.selected_index >= len(self.filtered_entries):
+            self.selected_index = max(0, len(self.filtered_entries) - 1)
+
+    def _submit_custom(self) -> None:
+        values = {}
+        for field_id, label, default, help_text in self.CUSTOM_FIELD_SPECS:
+            values[field_id] = self.custom_buffers[field_id].text
+        self.on_custom(values)
+        self.mode = "list"
+
+    def _get_custom_field_prompt(self, field_id: str, label: str, index: int) -> list:
+        is_sel = self.custom_field_index == index
+        prefix = "▸ " if is_sel else "  "
+        style = "class:picker-title" if is_sel else "class:picker-footer"
+        return [(style, f"{prefix}{label}: ")]
+
+    def _build_container(self):
+        search_prompt_control = FormattedTextControl(
             lambda: [("class:picker-search-prompt", "  ⌕  Search providers...")]
         )
 
+        self._search_control = BufferControl(buffer=self.search_buffer, focusable=True, lexer=None)
+        search_input_window = Window(content=self._search_control, style="class:picker-search")
+        self._search_window = search_input_window
+
         search_row = VSplit([
-            Window(content=self.search_prompt, width=22, style="class:picker-search"),
-            Window(content=self.search_control, style="class:picker-search"),
+            Window(content=search_prompt_control, width=22, style="class:picker-search"),
+            search_input_window,
         ], height=1)
 
         def get_list_fragments():
             fragments = []
             now = time.time()
-            pulse = (now - self._anim_start) * 3
+            pulse_val = (int((now - self._anim_start) * 2) % 2)
 
             for i, entry in enumerate(self.filtered_entries):
                 is_selected = (i == self.selected_index)
@@ -295,18 +371,19 @@ class ProviderPicker:
                 fragments.append(("class:picker-desc", entry.description))
                 if i < len(self.filtered_entries) - 1:
                     fragments.append(("", "\n"))
+
+            if self.mode == "list":
+                marker = "✦" if pulse_val else "✧"
+                customs_style = "class:picker-custom-highlight" if (self.selected_index >= len(self.filtered_entries)) else "class:picker-custom"
+                if fragments:
+                    fragments.append(("", "\n"))
+                fragments.append((customs_style, f"  {marker} Create custom provider"))
+
             return fragments
 
-        self.list_control = FormattedTextControl(get_list_fragments, focusable=True)
-
-        def get_custom_fragments():
-            if not self.filtered_entries or self.selected_index >= len(self.filtered_entries):
-                pulse = int((time.time() - self._anim_start) * 2) % 2
-                marker = "✦" if pulse else "✧"
-                return [("class:picker-custom", f"  {marker} Create custom provider  ")]
-            return []
-
-        self.custom_control = FormattedTextControl(get_custom_fragments, focusable=True)
+        list_control = FormattedTextControl(get_list_fragments, focusable=True)
+        self._list_control = list_control
+        list_window = Window(content=list_control, style="class:picker-bg")
 
         def get_count_fragments():
             total = len(self.entries)
@@ -323,6 +400,15 @@ class ProviderPicker:
         )
 
         def get_footer_fragments():
+            if self.mode == "custom":
+                return [
+                    ("class:picker-shortcut", " Tab "),
+                    ("class:picker-footer", "next field   "),
+                    ("class:picker-shortcut", "Enter "),
+                    ("class:picker-footer", "save   "),
+                    ("class:picker-shortcut", "Esc "),
+                    ("class:picker-footer", "cancel"),
+                ]
             return [
                 ("class:picker-shortcut", " ↑/↓ "),
                 ("class:picker-footer", "navigate   "),
@@ -334,35 +420,76 @@ class ProviderPicker:
                 ("class:picker-footer", "cancel"),
             ]
 
-        self.footer = FormattedTextControl(get_footer_fragments)
+        footer_control = FormattedTextControl(get_footer_fragments)
 
+        title_text = "  ✦ Create Custom Provider  " if self.mode == "custom" else "  ✦ Select LLM Provider  "
         title_bar = Window(
-            content=FormattedTextControl(lambda: [("class:picker-title", "  ✦ Select LLM Provider  ")]),
+            content=FormattedTextControl(lambda: [("class:picker-title", title_text)]),
             height=1,
             style="class:picker-card",
         )
 
-        body = HSplit([
+        list_body = HSplit([
             title_bar,
             Window(height=1, char="─", style="class:picker-border"),
             search_row,
             Window(height=1, char="─", style="class:picker-border"),
-            Window(content=self.list_control, style="class:picker-bg"),
-            ConditionalContainer(
-                content=Window(content=self.custom_control, height=1, style="class:picker-custom"),
-                filter=Condition(lambda: True),
-            ),
+            list_window,
             Window(height=1, char="─", style="class:picker-border"),
             VSplit([
-                Window(content=self.footer, style="class:picker-bg"),
+                Window(content=footer_control, style="class:picker-bg"),
                 count_bar,
             ]),
         ])
 
-        self.frame = Frame(body=body, style="class:picker-border")
+        custom_field_rows = []
+        for i, (field_id, label, default, help_text) in enumerate(self.CUSTOM_FIELD_SPECS):
+            is_password = field_id == "api_key"
 
-        self.root_container = FloatContainer(
-            content=self.frame,
+            prompt_control = FormattedTextControl(
+                lambda fid=field_id, lbl=label, idx=i: self._get_custom_field_prompt(fid, lbl, idx)
+            )
+
+            field_window = Window(
+                content=BufferControl(buffer=self.custom_buffers[field_id], focusable=True, password=is_password),
+                height=1,
+                style="class:picker-search",
+            )
+
+            help_control = FormattedTextControl(
+                lambda ht=help_text: [("class:picker-subtitle", f"    {ht}")]
+            )
+            help_window = Window(content=help_control, height=1, style="class:picker-bg")
+
+            custom_field_rows.append(HSplit([
+                Window(content=prompt_control, height=1, style="class:picker-bg"),
+                field_window,
+                help_window,
+            ]))
+
+        custom_body = HSplit([
+            title_bar,
+            Window(height=1, char="─", style="class:picker-border"),
+            Window(height=1, style="class:picker-bg"),
+            *custom_field_rows,
+            Window(height=1, style="class:picker-bg"),
+        ])
+
+        body = ConditionalContainer(
+            content=list_body,
+            filter=Condition(lambda: self.mode == "list"),
+        )
+        body_custom = ConditionalContainer(
+            content=custom_body,
+            filter=Condition(lambda: self.mode == "custom"),
+        )
+
+        outer = HSplit([body, body_custom])
+
+        frame = Frame(body=outer, style="class:picker-border")
+
+        root = FloatContainer(
+            content=frame,
             floats=[
                 Float(
                     xcursor=True,
@@ -372,146 +499,22 @@ class ProviderPicker:
             ],
         )
 
-    def _build_key_bindings(self) -> None:
-        self.kb = KeyBindings()
-
-        @self.kb.add("up")
-        def _up(event) -> None:
-            if self.show_custom_form:
-                return
-            if self.selected_index > 0:
-                self.selected_index -= 1
-            event.app.invalidate()
-
-        @self.kb.add("down")
-        def _down(event) -> None:
-            if self.show_custom_form:
-                return
-            max_idx = len(self.filtered_entries)
-            if self.selected_index < max_idx:
-                self.selected_index += 1
-            event.app.invalidate()
-
-        @self.kb.add("pageup")
-        def _page_up(event) -> None:
-            if self.show_custom_form:
-                return
-            self.selected_index = max(0, self.selected_index - 8)
-            event.app.invalidate()
-
-        @self.kb.add("pagedown")
-        def _page_down(event) -> None:
-            if self.show_custom_form:
-                return
-            self.selected_index = min(len(self.filtered_entries), self.selected_index + 8)
-            event.app.invalidate()
-
-        @self.kb.add("home")
-        def _home(event) -> None:
-            if self.show_custom_form:
-                return
-            self.selected_index = 0
-            event.app.invalidate()
-
-        @self.kb.add("end")
-        def _end(event) -> None:
-            if self.show_custom_form:
-                return
-            self.selected_index = len(self.filtered_entries)
-            event.app.invalidate()
-
-        @self.kb.add("enter")
-        def _enter(event) -> None:
-            if self.show_custom_form:
-                return
-            if self.selected_index >= len(self.filtered_entries):
-                self._show_custom_form()
-            elif self.filtered_entries:
-                self.on_select(self.filtered_entries[self.selected_index])
-            event.app.invalidate()
-
-        @self.kb.add("escape")
-        def _escape(event) -> None:
-            if self.show_custom_form:
-                self._hide_custom_form()
-            else:
-                self.on_cancel()
-
-        @self.kb.add("c-c")
-        def _ctrl_c(event) -> None:
-            self.on_cancel()
-
-        def on_search_change(buf: Buffer) -> None:
-            self.search_query = buf.text
-            self._filter_entries()
-            self.selected_index = 0
-            event.app.invalidate()
-
-        self.search_buffer.on_text_changed += on_search_change
-
-        @self.kb.add("tab")
-        def _tab(event) -> None:
-            if event.app.layout.current_window == self.frame.body.children[2].children[1].content:
-                event.app.layout.focus(self.list_control)
-            else:
-                event.app.layout.focus(self.search_buffer)
-
-        @self.kb.add("/")
-        def _slash(event) -> None:
-            if event.app.layout.current_window != self.search_buffer:
-                event.app.layout.focus(self.search_buffer)
-
-    def _filter_entries(self) -> None:
-        query = self.search_query.lower().strip()
-        if not query:
-            self.filtered_entries = list(self.entries)
-        else:
-            self.filtered_entries = [
-                e for e in self.entries
-                if (query in e.name.lower() or
-                    query in e.kind.lower() or
-                    query in e.description.lower() or
-                    query in e.default_model.lower())
-            ]
-
-    def _show_custom_form(self) -> None:
-        self.show_custom_form = True
-
-        def on_submit(values: dict) -> None:
-            self.on_custom(values)
-            self.show_custom_form = False
-            self.custom_form = None
-            if self._app:
-                self._app.invalidate()
-
-        def on_cancel() -> None:
-            self.show_custom_form = False
-            self.custom_form = None
-            if self._app:
-                self._app.invalidate()
-
-        self.custom_form = CustomProviderForm(on_submit, on_cancel)
-        self.frame.body = self.custom_form.container
-        if self._app:
-            self._app.layout.focus(self.custom_form.buffers["name"])
-
-    def _hide_custom_form(self) -> None:
-        self.show_custom_form = False
-        self.custom_form = None
-        self._build_ui()
-        if self._app:
-            self._app.layout.focus(self.search_buffer)
+        return root
 
     def run(self) -> None:
+        root = self._build_container()
         app = Application(
-            layout=Layout(self.root_container, focused_element=self.search_buffer),
+            layout=Layout(root, focused_element=self.search_buffer),
             key_bindings=self.kb,
             style=PICKER_STYLE,
             full_screen=True,
             mouse_support=True,
         )
         self._app = app
-        app.run()
+        try:
+            app.run()
+        except (EOFError, KeyboardInterrupt):
+            self.on_cancel()
 
 
 def pick_provider(

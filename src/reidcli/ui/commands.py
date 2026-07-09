@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 from typing import Callable
@@ -9,11 +9,10 @@ from rich.text import Text
 
 from reidcli.goals.models import Goal, GoalNodeKind, GoalStatus
 from reidcli.policy.models import PermissionMode
-from reidcli.provider.popular import POPULAR_PROVIDERS
 from reidcli.provider.store import SUPPORTED_KINDS, ProviderRecord, ProviderStore, build_provider
 from reidcli.runtime.orchestrator import Orchestrator
 from reidcli.ui import render
-from reidcli.ui.provider_picker import pick_provider
+from reidcli.ui.provider_picker import ProviderEntry, pick_provider
 from reidcli.ui.theme import APP_NAME, BOX, PRIMARY
 from reidcli.workflows.models import Workflow
 
@@ -31,7 +30,7 @@ def review_prompt(pr: str) -> str:
         f"description and `gh pr diff {pr}` for the diff (requires the gh CLI installed and "
         "authenticated). Then critique the diff for correctness bugs first, then reuse/"
         "simplification/efficiency issues, most severe first. For your own uncommitted working "
-        "diff instead of a remote PR, just ask directly — this command is for a PR already "
+        "diff instead of a remote PR, just ask directly â€” this command is for a PR already "
         "pushed to GitHub."
     )
 
@@ -55,7 +54,7 @@ SLASH_COMMANDS: list[tuple[str, str, str, str]] = [
     ("/workflows", "", "list saved workflows", "Workflows"),
     ("/workflow", "<run|save|show|delete> ...", "manage saved workflows", "Workflows"),
     ("/providers", "", "list registered providers (stub is always default)", "Providers"),
-    ("/connect", "<name> <kind> <base_url> [api_key] [model]", "add a provider (kind: anthropic|openai|openai-compatible|ollama)", "Providers"),
+    ("/connect", "", "opens interactive menu for adding providers", "Providers"),
     ("/disconnect", "<name>", "remove a saved provider", "Providers"),
     ("/use", "<name>", "switch this session to a registered provider", "Providers"),
     ("/help", "", "show this help", "Meta"),
@@ -137,7 +136,7 @@ def _build_help() -> Group:
     parts.append(
         section(
             "Tip",
-            "  Type / to see a completion menu for every command above — Tab/Down to select, Enter to accept.",
+            "  Type / to see a completion menu for every command above â€” Tab/Down to select, Enter to accept.",
         )
     )
     return Group(*parts)
@@ -153,7 +152,7 @@ def _set_mode(orchestrator: Orchestrator, value: str) -> bool:
         render.print_error(f"unknown mode: {value}")
         return False
     orchestrator.set_permission_mode(mode)
-    render.print_info(f"mode → {mode.value}")
+    render.print_info(f"mode â†’ {mode.value}")
     return True
 
 
@@ -166,7 +165,7 @@ def _handle_nyx(orchestrator: Orchestrator, arg: str) -> None:
         render.print_error("usage: /nyx [on|off]")
         return
     orchestrator.set_nyx(value == "on")
-    render.print_info(f"nyx → {value}")
+    render.print_info(f"nyx â†’ {value}")
 
 
 def _handle_workflow(orchestrator: Orchestrator, arg: str) -> str | None:
@@ -452,114 +451,6 @@ def _handle_providers(orchestrator: Orchestrator) -> None:
     render.print_providers(persisted, active, extra)
 
 
-def _handle_connect(orchestrator: Orchestrator, arg: str) -> None:
-    arg = arg.strip()
-
-    if arg:
-        parts = arg.split()
-        if len(parts) < 3:
-            render.print_error(
-                "usage: /connect <name> <kind> <base_url> [api_key] [model]  "
-                f"(kind: {'|'.join(SUPPORTED_KINDS)})"
-            )
-            return
-        name, kind, base_url = parts[0], parts[1], parts[2]
-        if kind not in SUPPORTED_KINDS:
-            render.print_error(f"unknown kind: {kind} (try {'|'.join(SUPPORTED_KINDS)})")
-            return
-        if name in _BUILTIN_PROVIDER_NAMES and kind != "anthropic":
-            render.print_error(f"name '{name}' is reserved for the built-in provider")
-            return
-        api_key = parts[3] if len(parts) > 3 else ""
-        model = parts[4] if len(parts) > 4 else ""
-        record = ProviderRecord(name=name, kind=kind, base_url=base_url, api_key=api_key, default_model=model)
-        try:
-            provider = build_provider(record)
-        except ValueError as exc:
-            render.print_error(f"failed to build provider: {exc}")
-            return
-        _providers_store(orchestrator).save(record)
-        if orchestrator.providers is not None:
-            orchestrator.providers.register(name, provider)
-        render.print_info(f"connected provider '{name}' ({kind}) → {base_url or '(default)'}")
-        render.print_info(f"switch with: /use {name}")
-        return
-
-    render.print_info("Opening interactive provider picker... (Esc to cancel)")
-
-    def on_select(entry) -> None:
-        from reidcli.provider.popular import ProviderEntry
-        if not isinstance(entry, ProviderEntry):
-            render.print_error("Invalid selection")
-            return
-        name = entry.name
-        kind = entry.kind
-        base_url = entry.base_url
-        model = entry.default_model
-
-        if getattr(entry, 'is_custom', False):
-            return
-
-        if name in _BUILTIN_PROVIDER_NAMES and kind != "anthropic":
-            render.print_error(f"name '{name}' is reserved for the built-in provider")
-            return
-
-        api_key = ""
-        if kind in ("anthropic", "openai", "openai-compatible"):
-            pass
-
-        record = ProviderRecord(name=name, kind=kind, base_url=base_url, api_key=api_key, default_model=model)
-        try:
-            provider = build_provider(record)
-        except ValueError as exc:
-            render.print_error(f"failed to build provider: {exc}")
-            return
-        _providers_store(orchestrator).save(record)
-        if orchestrator.providers is not None:
-            orchestrator.providers.register(name, provider)
-        render.print_info(f"connected provider '{name}' ({kind}) → {base_url or '(default)'}")
-        render.print_info(f"switch with: /use {name}")
-
-    def on_custom(fields: dict) -> None:
-        name = fields.get("name", "").strip()
-        kind = fields.get("kind", "").strip()
-        base_url = fields.get("base_url", "").strip()
-        api_key = fields.get("api_key", "").strip()
-        model = fields.get("default_model", "").strip()
-
-        if not name or not kind or not base_url:
-            render.print_error("Custom provider requires name, kind, and base_url")
-            return
-
-        if kind not in SUPPORTED_KINDS:
-            render.print_error(f"unknown kind: {kind} (try {'|'.join(SUPPORTED_KINDS)})")
-            return
-
-        if name in _BUILTIN_PROVIDER_NAMES and kind != "anthropic":
-            render.print_error(f"name '{name}' is reserved for the built-in provider")
-            return
-
-        record = ProviderRecord(name=name, kind=kind, base_url=base_url, api_key=api_key, default_model=model)
-        try:
-            provider = build_provider(record)
-        except ValueError as exc:
-            render.print_error(f"failed to build provider: {exc}")
-            return
-        _providers_store(orchestrator).save(record)
-        if orchestrator.providers is not None:
-            orchestrator.providers.register(name, provider)
-        render.print_info(f"connected custom provider '{name}' ({kind}) → {base_url}")
-        render.print_info(f"switch with: /use {name}")
-
-    def on_cancel() -> None:
-        render.print_info("Provider picker cancelled")
-
-    try:
-        pick_provider(on_select, on_custom, on_cancel)
-    except Exception as e:
-        render.print_error(f"Provider picker failed: {e}")
-
-
 def _handle_disconnect(orchestrator: Orchestrator, arg: str) -> None:
     name = arg.strip()
     if not name:
@@ -597,7 +488,7 @@ def _handle_use(orchestrator: Orchestrator, arg: str) -> None:
     except (KeyError, RuntimeError) as exc:
         render.print_error(str(exc))
         return
-    render.print_info(f"active provider → {name}  (model: {orchestrator.state.session.model})")
+    render.print_info(f"active provider â†’ {name}  (model: {orchestrator.state.session.model})")
 
 
 def handle(orchestrator: Orchestrator, line: str) -> str:
@@ -649,7 +540,7 @@ def handle(orchestrator: Orchestrator, line: str) -> str:
         else:
             orchestrator.state.session.model = arg
             orchestrator.session_store.update(orchestrator.state.session)
-            render.print_info(f"model → {arg}")
+            render.print_info(f"model â†’ {arg}")
     elif cmd == "effort":
         if orchestrator.state is None:
             render.print_error("usage: /effort <low|medium|high|xhigh> (with an active session)")
@@ -660,7 +551,7 @@ def handle(orchestrator: Orchestrator, line: str) -> str:
         else:
             orchestrator.state.session.reasoning_effort = arg
             orchestrator.session_store.update(orchestrator.state.session)
-            render.print_info(f"effort → {arg}")
+            render.print_info(f"effort â†’ {arg}")
     elif cmd == "mode":
         if not arg:
             render.print_info(f"current mode: {orchestrator.policy.mode.value}")
@@ -699,3 +590,4 @@ def handle(orchestrator: Orchestrator, line: str) -> str:
     else:
         render.print_error(f"unknown command: /{cmd} (try /help)")
     return "continue"
+
