@@ -1,18 +1,3 @@
-"""On-disk persistence for user-added providers (`/connect`).
-
-File: `<storage_root>/providers.json`, chmod 600 on POSIX so API keys aren't
-world-readable. Format:
-
-    {"providers": [
-        {"name": "local-llama", "kind": "openai-compatible",
-         "base_url": "http://localhost:8080", "api_key": "", "default_model": "..."},
-        ...
-    ]}
-
-The registry rebuilds each provider on load via `build_provider(kind, ...)`.
-Nothing in here auto-changes `config.default_provider` — stub stays default;
-switching is explicit via `/use`.
-"""
 from __future__ import annotations
 
 import json
@@ -23,6 +8,7 @@ from pathlib import Path
 from reidcli.diagnostics.logger import get_logger
 from reidcli.provider.anthropic import AnthropicProvider
 from reidcli.provider.base import BaseProvider
+from reidcli.provider.encrypted_store import EncryptedProviderRecord, EncryptedProviderStore, get_encrypted_store
 from reidcli.provider.ollama import OllamaProvider
 from reidcli.provider.openai import OpenAICompatibleProvider, OpenAIProvider
 from reidcli.provider.registry import ProviderRegistry
@@ -72,64 +58,57 @@ def build_provider(record: ProviderRecord) -> BaseProvider:
 
 class ProviderStore:
     def __init__(self, storage_root: Path) -> None:
-        self.path = Path(storage_root) / "providers.json"
+        self.legacy_path = Path(storage_root) / "providers.json"
+        self.encrypted_store = get_encrypted_store()
 
-    def _read(self) -> list[ProviderRecord]:
-        if not self.path.exists():
-            return []
-        try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            log.exception("failed to read providers.json; treating as empty")
-            return []
-        out: list[ProviderRecord] = []
-        for entry in data.get("providers", []):
-            try:
-                out.append(ProviderRecord(**entry))
-            except TypeError:
-                log.warning("skipping malformed provider entry: %s", entry)
-        return out
+    def _migrate_legacy(self) -> None:
+        if not self.legacy_path.exists():
+            return
 
-    def _write(self, records: list[ProviderRecord]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps({"providers": [asdict(r) for r in records]}, indent=2),
-            encoding="utf-8",
-        )
-        # Best-effort key protection on POSIX; a no-op on Windows.
         try:
-            os.chmod(self.path, 0o600)
-        except OSError:
-            pass
+            data = json.loads(self.legacy_path.read_text(encoding="utf-8"))
+            legacy_providers = data.get("providers", [])
+            if not legacy_providers:
+                return
+
+            log.info("Migrating %d legacy providers to encrypted store", len(legacy_providers))
+            for entry in legacy_providers:
+                try:
+                    record = ProviderRecord(**entry)
+                    self.encrypted_store.save(record)
+                except (TypeError, ValueError):
+                    log.warning("Skipping malformed legacy provider: %s", entry)
+
+            backup_path = self.legacy_path.with_suffix(".json.bak")
+            self.legacy_path.rename(backup_path)
+            log.info("Legacy providers migrated; backup at %s", backup_path)
+
+        except (OSError, ValueError) as e:
+            log.warning("Failed to migrate legacy providers: %s", e)
+
+    def _ensure_migrated(self) -> None:
+        if not hasattr(self, "_migrated"):
+            self._migrate_legacy()
+            self._migrated = True
 
     def list(self) -> list[ProviderRecord]:
-        return self._read()
+        self._ensure_migrated()
+        return self.encrypted_store.list()
 
     def get(self, name: str) -> ProviderRecord | None:
-        for r in self._read():
-            if r.name == name:
-                return r
-        return None
+        self._ensure_migrated()
+        return self.encrypted_store.get(name)
 
     def save(self, record: ProviderRecord) -> None:
-        records = [r for r in self._read() if r.name != record.name]
-        records.append(record)
-        self._write(records)
+        self._ensure_migrated()
+        self.encrypted_store.save(record)
 
     def delete(self, name: str) -> bool:
-        records = self._read()
-        remaining = [r for r in records if r.name != name]
-        if len(remaining) == len(records):
-            return False
-        self._write(remaining)
-        return True
+        self._ensure_migrated()
+        return self.encrypted_store.delete(name)
 
 
 def load_into(registry: ProviderRegistry, storage_root: Path) -> list[str]:
-    """Register every persisted provider into `registry`. Returns the list of
-    names successfully registered. Skips (with a warning) any record whose
-    kind is unknown or fails to construct — the app must not crash on a
-    single bad entry."""
     added: list[str] = []
     store = ProviderStore(storage_root)
     for record in store.list():

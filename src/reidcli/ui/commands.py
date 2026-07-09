@@ -1,16 +1,7 @@
-"""Slash command routing for the REPL.
-
-Each command returns a string hint for the REPL loop:
-  "continue"  -> keep the loop running
-  "exit"      -> stop the loop
-Commands mutate orchestrator/state in place. Add new commands here — and add
-a matching entry to SLASH_COMMANDS (or WORKFLOW_SUBCOMMANDS) below, which is
-the single source both /help and the "/" completion menu (ui/app.py) render
-from, so they can't drift out of sync.
-"""
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from rich.console import Group
 from rich.panel import Panel
@@ -18,21 +9,16 @@ from rich.text import Text
 
 from reidcli.goals.models import Goal, GoalNodeKind, GoalStatus
 from reidcli.policy.models import PermissionMode
+from reidcli.provider.popular import POPULAR_PROVIDERS
 from reidcli.provider.store import SUPPORTED_KINDS, ProviderRecord, ProviderStore, build_provider
 from reidcli.runtime.orchestrator import Orchestrator
 from reidcli.ui import render
+from reidcli.ui.provider_picker import pick_provider
 from reidcli.ui.theme import APP_NAME, BOX, PRIMARY
 from reidcli.workflows.models import Workflow
 
 _EFFORT_LEVELS = ("low", "medium", "high", "xhigh")
 
-# /recap and /review don't do their own work here — they expand into a normal
-# user turn (see ui.app's handling of the "recap-run"/"review-run:<pr>"
-# outcomes below) so they get the full existing turn pipeline for free:
-# conversation history already in state.messages, the thinking spinner, and
-# (for /review) the same policy-gated run_command tool call as any other
-# shell command, prompting for approval in balanced/strict mode exactly like
-# a user-typed `gh pr diff ...` would.
 RECAP_PROMPT = (
     "Give a one-line recap of what we've accomplished in this session so far. "
     "Respond with exactly one line, no preamble."
@@ -49,7 +35,6 @@ def review_prompt(pr: str) -> str:
         "pushed to GitHub."
     )
 
-# (command, args-hint, description, help-group). Order here is display order.
 SLASH_COMMANDS: list[tuple[str, str, str, str]] = [
     ("/status", "", "show current session + mode + tasks", "Session"),
     ("/sessions", "", "list all sessions", "Session"),
@@ -78,7 +63,6 @@ SLASH_COMMANDS: list[tuple[str, str, str, str]] = [
     ("/exit", "", f"quit {APP_NAME}", "Meta"),
 ]
 
-# (subcommand, args-hint, description) for "/workflow <subcommand>".
 WORKFLOW_SUBCOMMANDS: list[tuple[str, str, str]] = [
     ("run", "<name>", "run a workflow's steps in sequence"),
     ("save", "<name> [n]", "save the last n user turns as a workflow (default 5)"),
@@ -102,12 +86,6 @@ GOAL_SUBCOMMANDS: list[tuple[str, str, str]] = [
     ("delete", "<id>", "delete a goal"),
 ]
 
-
-# Fixed value choices for commands whose argument is a small enum. The "/"
-# completion menu offers these the moment you type "/<cmd> " — the same way
-# "/goal " lists its subcommands — so you never have to remember the valid
-# values. (command -> list of (value, description).) Kept here beside
-# SLASH_COMMANDS so the menu and the code that parses these stay in sync.
 ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
     "/effort": [
         ("low", "minimal reasoning, fastest"),
@@ -137,11 +115,6 @@ ARG_CHOICES: dict[str, list[tuple[str, str]]] = {
 
 def _build_help() -> Group:
     def section(header: str, body: str) -> Text:
-        # Text(..., style=...) applies to just the constructor's own content
-        # (the header); .append() with no style keeps the body literal — this
-        # avoids Text.from_markup(), which would otherwise parse literal "["
-        # in args hints like "[n]"/"[status]" as (invalid) markup tags and
-        # silently swallow them.
         text = Text(f"{header}\n", style="bold")
         text.append(f"{body}\n")
         return text
@@ -164,7 +137,7 @@ def _build_help() -> Group:
     parts.append(
         section(
             "Tip",
-            "  Type / to see a completion menu for every command above — Tab/↓ to select, Enter to accept.",
+            "  Type / to see a completion menu for every command above — Tab/Down to select, Enter to accept.",
         )
     )
     return Group(*parts)
@@ -197,13 +170,6 @@ def _handle_nyx(orchestrator: Orchestrator, arg: str) -> None:
 
 
 def _handle_workflow(orchestrator: Orchestrator, arg: str) -> str | None:
-    """Handles /workflow <run|save|show|delete> ...
-
-    Returns "workflow-run:<name>" for /workflow run (the caller — ui.app's
-    async turn loop — is the only thing that can actually execute a
-    workflow's steps, since that requires awaiting each step's turn); returns
-    None for every other subcommand (handled fully here).
-    """
     parts = arg.split(None, 1)
     if not parts:
         render.print_error("usage: /workflow <run|save|show|delete> <name> ...")
@@ -267,7 +233,7 @@ def _goal_store(orchestrator: Orchestrator):
         return None
 
 
-def _active_goal(store) -> Goal | None:  # type: ignore[no-untyped-def]
+def _active_goal(store) -> Goal | None:
     goal = store.active()
     if goal is None:
         render.print_error("no active goal (try /goal new <title>)")
@@ -281,8 +247,7 @@ def _split_first(text: str) -> tuple[str, str]:
     return parts[0], (parts[1] if len(parts) > 1 else "").strip()
 
 
-def _resolve_goal_target(store, text: str) -> tuple[Goal | None, str | None, str]:  # type: ignore[no-untyped-def]
-    """Resolve optional target syntax: goal id, active-goal node id, or active goal."""
+def _resolve_goal_target(store, text: str) -> tuple[Goal | None, str | None, str]:
     token, rest = _split_first(text)
     active = store.active()
     if not token:
@@ -298,7 +263,7 @@ def _resolve_goal_target(store, text: str) -> tuple[Goal | None, str | None, str
     return active, None, text.strip()
 
 
-def _handle_goal_evidence(store, arg: str) -> None:  # type: ignore[no-untyped-def]
+def _handle_goal_evidence(store, arg: str) -> None:
     sub, rest = _split_first(arg)
     goal = _active_goal(store)
     if goal is None:
@@ -460,8 +425,6 @@ def _handle_goal(orchestrator: Orchestrator, arg: str) -> str | None:
             render.print_error(f"no such goal: {rest}")
         return None
 
-    # Natural fallback: `/goal make me a report` should create a goal, not
-    # force the user to remember `/goal new ...`.
     goal = store.create(arg.strip())
     render.print_info(f"created active goal {goal.id}")
     render.print_goal(goal)
@@ -490,33 +453,111 @@ def _handle_providers(orchestrator: Orchestrator) -> None:
 
 
 def _handle_connect(orchestrator: Orchestrator, arg: str) -> None:
-    parts = arg.split()
-    if len(parts) < 3:
-        render.print_error(
-            "usage: /connect <name> <kind> <base_url> [api_key] [model]  "
-            f"(kind: {'|'.join(SUPPORTED_KINDS)})"
-        )
+    arg = arg.strip()
+
+    if arg:
+        parts = arg.split()
+        if len(parts) < 3:
+            render.print_error(
+                "usage: /connect <name> <kind> <base_url> [api_key] [model]  "
+                f"(kind: {'|'.join(SUPPORTED_KINDS)})"
+            )
+            return
+        name, kind, base_url = parts[0], parts[1], parts[2]
+        if kind not in SUPPORTED_KINDS:
+            render.print_error(f"unknown kind: {kind} (try {'|'.join(SUPPORTED_KINDS)})")
+            return
+        if name in _BUILTIN_PROVIDER_NAMES and kind != "anthropic":
+            render.print_error(f"name '{name}' is reserved for the built-in provider")
+            return
+        api_key = parts[3] if len(parts) > 3 else ""
+        model = parts[4] if len(parts) > 4 else ""
+        record = ProviderRecord(name=name, kind=kind, base_url=base_url, api_key=api_key, default_model=model)
+        try:
+            provider = build_provider(record)
+        except ValueError as exc:
+            render.print_error(f"failed to build provider: {exc}")
+            return
+        _providers_store(orchestrator).save(record)
+        if orchestrator.providers is not None:
+            orchestrator.providers.register(name, provider)
+        render.print_info(f"connected provider '{name}' ({kind}) → {base_url or '(default)'}")
+        render.print_info(f"switch with: /use {name}")
         return
-    name, kind, base_url = parts[0], parts[1], parts[2]
-    if kind not in SUPPORTED_KINDS:
-        render.print_error(f"unknown kind: {kind} (try {'|'.join(SUPPORTED_KINDS)})")
-        return
-    if name in _BUILTIN_PROVIDER_NAMES and kind != "anthropic":
-        render.print_error(f"name '{name}' is reserved for the built-in provider")
-        return
-    api_key = parts[3] if len(parts) > 3 else ""
-    model = parts[4] if len(parts) > 4 else ""
-    record = ProviderRecord(name=name, kind=kind, base_url=base_url, api_key=api_key, default_model=model)
+
+    render.print_info("Opening interactive provider picker... (Esc to cancel)")
+
+    def on_select(entry) -> None:
+        from reidcli.provider.popular import ProviderEntry
+        if not isinstance(entry, ProviderEntry):
+            render.print_error("Invalid selection")
+            return
+        name = entry.name
+        kind = entry.kind
+        base_url = entry.base_url
+        model = entry.default_model
+
+        if getattr(entry, 'is_custom', False):
+            return
+
+        if name in _BUILTIN_PROVIDER_NAMES and kind != "anthropic":
+            render.print_error(f"name '{name}' is reserved for the built-in provider")
+            return
+
+        api_key = ""
+        if kind in ("anthropic", "openai", "openai-compatible"):
+            pass
+
+        record = ProviderRecord(name=name, kind=kind, base_url=base_url, api_key=api_key, default_model=model)
+        try:
+            provider = build_provider(record)
+        except ValueError as exc:
+            render.print_error(f"failed to build provider: {exc}")
+            return
+        _providers_store(orchestrator).save(record)
+        if orchestrator.providers is not None:
+            orchestrator.providers.register(name, provider)
+        render.print_info(f"connected provider '{name}' ({kind}) → {base_url or '(default)'}")
+        render.print_info(f"switch with: /use {name}")
+
+    def on_custom(fields: dict) -> None:
+        name = fields.get("name", "").strip()
+        kind = fields.get("kind", "").strip()
+        base_url = fields.get("base_url", "").strip()
+        api_key = fields.get("api_key", "").strip()
+        model = fields.get("default_model", "").strip()
+
+        if not name or not kind or not base_url:
+            render.print_error("Custom provider requires name, kind, and base_url")
+            return
+
+        if kind not in SUPPORTED_KINDS:
+            render.print_error(f"unknown kind: {kind} (try {'|'.join(SUPPORTED_KINDS)})")
+            return
+
+        if name in _BUILTIN_PROVIDER_NAMES and kind != "anthropic":
+            render.print_error(f"name '{name}' is reserved for the built-in provider")
+            return
+
+        record = ProviderRecord(name=name, kind=kind, base_url=base_url, api_key=api_key, default_model=model)
+        try:
+            provider = build_provider(record)
+        except ValueError as exc:
+            render.print_error(f"failed to build provider: {exc}")
+            return
+        _providers_store(orchestrator).save(record)
+        if orchestrator.providers is not None:
+            orchestrator.providers.register(name, provider)
+        render.print_info(f"connected custom provider '{name}' ({kind}) → {base_url}")
+        render.print_info(f"switch with: /use {name}")
+
+    def on_cancel() -> None:
+        render.print_info("Provider picker cancelled")
+
     try:
-        provider = build_provider(record)
-    except ValueError as exc:
-        render.print_error(f"failed to build provider: {exc}")
-        return
-    _providers_store(orchestrator).save(record)
-    if orchestrator.providers is not None:
-        orchestrator.providers.register(name, provider)
-    render.print_info(f"connected provider '{name}' ({kind}) → {base_url or '(default)'}")
-    render.print_info(f"switch with: /use {name}")
+        pick_provider(on_select, on_custom, on_cancel)
+    except Exception as e:
+        render.print_error(f"Provider picker failed: {e}")
 
 
 def _handle_disconnect(orchestrator: Orchestrator, arg: str) -> None:
