@@ -19,7 +19,7 @@ phase plans.
 
 ## Target stack
 
-- **Python** 3.12+
+- **Python** 3.11+
 - **Typer** â€” CLI command surface
 - **Pydantic v2** â€” schemas and validation
 - **Rich** â€” terminal rendering (markdown, tables, panels)
@@ -34,7 +34,7 @@ phase plans.
 
 ### Option A: install via npm
 
-Requires Python 3.12+ on your `PATH` (the npm package is a thin wrapper that
+Requires Python 3.11+ on your `PATH` (the npm package is a thin wrapper that
 pip-installs the Python package on `npm install`).
 
 ```powershell

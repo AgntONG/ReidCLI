@@ -16,7 +16,7 @@ function main() {
   const python = findPython();
   if (!python) {
     console.warn(
-      "reid: no Python 3.12+ interpreter found on PATH — skipping automatic setup.\n" +
+      "reid: no Python 3.11+ interpreter found on PATH — skipping automatic setup.\n" +
         "Install Python, then run: pip install --user " + JSON.stringify(PACKAGE_ROOT)
     );
     return;

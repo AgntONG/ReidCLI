@@ -8,7 +8,7 @@ function main() {
   const python = findPython();
   if (!python) {
 console.error(
-      "reid: no Python 3.12+ interpreter found on PATH.\n" +
+      "reid: no Python 3.11+ interpreter found on PATH.\n" +
         "Install Python (https://www.python.org/downloads/) and re-run `npm install -g reidsh`."
     );
     process.exit(1);

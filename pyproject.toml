@@ -3,7 +3,7 @@ name = "reidcli"
 version = "2.0.1"
 description = "Terminal-native personal intelligence and coding CLI (agent-first runtime)"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Reid" }]
 dependencies = [
