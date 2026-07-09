@@ -93,8 +93,7 @@ def _bullet_grid(marker: Text, body) -> Table:  # type: ignore[no-untyped-def]
 # Mascot ASCII art, printed to the left of the welcome panel in the empty
 # space there. Purely decorative — kept as its own constant so it's easy to
 # swap out.
-_MASCOT = r"""                                                           
-                    "...'...                     
+_MASCOT = r"""                    "...'...                     
                ^l'+??!_????:^'...:`"             
             ,`????????????????"'......           
           r^???????i-+??????:?-;Il"...           
@@ -113,9 +112,7 @@ _MASCOT = r"""
                       .......... .i.             
                        .^l..^.. .                
                       l `.. .                    
-                       ~                         
-                                                 
-                                                 """
+                       ~       """
 
 
 def banner() -> None:
