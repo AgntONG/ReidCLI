@@ -1,5 +1,5 @@
 {
-  "name": "reidai",
+  "name": "reid-cli",
   "version": "2.0.1",
   "description": "Terminal-native personal intelligence and coding CLI (agent-first runtime)",
   "keywords": [
@@ -22,8 +22,8 @@
   "type": "commonjs",
   "main": "index.js",
   "bin": {
-    "reid": "bin/reidverse-cli.js",
-    "reidcli": "bin/reidverse-cli.js"
+    "reid": "bin/reid-cli.js",
+    "reid-cli": "bin/reid-cli.js"
   },
   "directories": {
     "doc": "docs",

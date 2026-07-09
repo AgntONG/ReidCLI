@@ -1,8 +1,7 @@
 {
   "cleanupPeriodDays": 99999,
   "env": {
-    "ANTHROPIC_API_KEY": "rc-1c93e78185fa4475a3c386d210530d42",
-    "ANTHROPIC_BASE_URL": "https://reidchat-api.up.railway.app",
+    "ANTHROPIC_BASE_URL": "https://reid-api.up.railway.app",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "ANTHROPIC_MODEL": "gpt-5-5",
     "DISABLE_ERROR_REPORTING": "1"

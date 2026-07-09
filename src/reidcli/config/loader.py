@@ -68,8 +68,8 @@ class ConfigLoader:
         self.project_dir = project_dir
 
     def load(self) -> Config:
-        # Apply the Reidchat settings file's env block (ANTHROPIC_* creds) before
-        # anything reads the environment, so the provider routes through Reidchat.
+        # Apply the settings file's env block (ANTHROPIC_* creds) before
+        # anything reads the environment, so the provider routes appropriately.
         apply_settings_env()
         data = default_config().model_dump(mode="json")
         data = _deep_merge(data, _read_json(self.global_dir / CONFIG_FILENAME))

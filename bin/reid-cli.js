@@ -7,9 +7,9 @@ const { findPython } = require("../scripts/find-python");
 function main() {
   const python = findPython();
   if (!python) {
-    console.error(
+console.error(
       "reid: no Python 3.12+ interpreter found on PATH.\n" +
-        "Install Python (https://www.python.org/downloads/) and re-run `npm install -g reid`."
+        "Install Python (https://www.python.org/downloads/) and re-run `npm install -g reid-cli`."
     );
     process.exit(1);
   }

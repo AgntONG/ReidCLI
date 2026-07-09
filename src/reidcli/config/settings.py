@@ -8,15 +8,9 @@ config lives under `reidcli` so unknown keys (`theme`, `effortLevel`, ...) are
 ignored harmlessly.
 
 Path resolution (first hit wins):
-  1. $REIDCHAT_SETTINGS                (explicit override)
+  1. $REIDCLI_SETTINGS                (explicit override)
   2. ./settings.json                   (project-local, when it exists)
-  3. E:/leech/Reidchat.json            (legacy default — the shared Reidchat file)
-
-Project-local wins over the shared Reidchat file so a project can bake in a
-different backend, permission mode, or provider set without editing the
-global file. The env block is authoritative for the process (overrides any
-ambient env) — this is how ReidCLI picks up the Reidchat proxy credentials
-even when the shell's ANTHROPIC_* vars point somewhere else.
+  3. ~/.reidcli/settings.json          (global default)
 """
 from __future__ import annotations
 
@@ -28,7 +22,6 @@ from reidcli.diagnostics.logger import get_logger
 
 log = get_logger("reidcli.config.settings")
 
-LEGACY_SETTINGS_PATH = Path("E:/leech/Reidchat.json")
 GLOBAL_SETTINGS_PATH = Path.home() / ".reidcli" / "settings.json"
 PROJECT_SETTINGS_FILENAME = "settings.json"
 
@@ -36,7 +29,7 @@ PROJECT_SETTINGS_FILENAME = "settings.json"
 def _walk_upward_for_project_settings(start: Path) -> Path | None:
     """Walk from `start` toward the filesystem root looking for settings.json.
 
-    Mirrors how git finds `.git` — so launching `reidcli` from any
+    Mirrors how git finds `.git` — so launching `reid-cli` from any
     subdirectory of a project still finds that project's baked-in
     settings.json. Stops at the root (path.parent == path).
     """
@@ -58,23 +51,20 @@ def settings_path() -> Path:
     """Resolve the settings file path (first hit wins).
 
     Order:
-      1. $REIDCHAT_SETTINGS                    (explicit override)
+      1. $REIDCLI_SETTINGS                    (explicit override)
       2. project settings.json (walk upward from CWD)
       3. ~/.reidcli/settings.json              (global default)
-      4. E:/leech/Reidchat.json                (legacy shared file)
 
     Returns the last fallback even if it doesn't exist, so `doctor` can
     report it as "missing" rather than crashing on a None.
     """
-    override = os.environ.get("REIDCHAT_SETTINGS", "").strip()
+    override = os.environ.get("REIDCLI_SETTINGS", "").strip()
     if override:
         return Path(override)
     project = _walk_upward_for_project_settings(Path.cwd())
     if project is not None:
         return project
-    if GLOBAL_SETTINGS_PATH.exists():
-        return GLOBAL_SETTINGS_PATH
-    return LEGACY_SETTINGS_PATH
+    return GLOBAL_SETTINGS_PATH
 
 
 def _read_settings(path: Path | None = None) -> dict:
