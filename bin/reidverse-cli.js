@@ -8,8 +8,8 @@ function main() {
   const python = findPython();
   if (!python) {
     console.error(
-      "reidverse-cli: no Python 3.12+ interpreter found on PATH.\n" +
-        "Install Python (https://www.python.org/downloads/) and re-run `npm install -g reidverse-cli`."
+      "reid: no Python 3.12+ interpreter found on PATH.\n" +
+        "Install Python (https://www.python.org/downloads/) and re-run `npm install -g reid`."
     );
     process.exit(1);
   }
@@ -22,7 +22,7 @@ function main() {
 
   if (result.error) {
     console.error(
-      `reidverse-cli: failed to launch Python (${python.cmd}): ${result.error.message}`
+      `reid: failed to launch Python (${python.cmd}): ${result.error.message}`
     );
     process.exit(1);
   }

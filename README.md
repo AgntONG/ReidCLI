@@ -38,10 +38,10 @@ Requires Python 3.12+ on your `PATH` (the npm package is a thin wrapper that
 pip-installs the Python package on `npm install`).
 
 ```powershell
-npm install -g reidverse-cli
+npm install -g reid
 ```
 
-This gives you both `reidverse-cli` and `reidcli` on your `PATH`. Skip to
+This gives you both `reid` and `reidcli` on your `PATH`. Skip to
 [step 2](#2-verify-the-install) to check it worked.
 
 ### Option B: install from source

@@ -1,13 +1,33 @@
 {
-  "name": "reidverse-cli",
+  "name": "reid",
   "version": "2.0.1",
   "description": "Terminal-native personal intelligence and coding CLI (agent-first runtime)",
+  "keywords": [
+    "cli",
+    "agent",
+    "ai",
+    "reidcli",
+    "terminal"
+  ],
+  "homepage": "https://github.com/AgntONG/ReidCLI#readme",
+  "bugs": {
+    "url": "https://github.com/AgntONG/ReidCLI/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AgntONG/ReidCLI.git"
+  },
+  "license": "MIT",
+  "author": "Reid",
+  "type": "commonjs",
+  "main": "index.js",
   "bin": {
-    "reidverse-cli": "bin/reidverse-cli.js",
+    "reid": "bin/reidverse-cli.js",
     "reidcli": "bin/reidverse-cli.js"
   },
-  "scripts": {
-    "postinstall": "node scripts/postinstall.js"
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
   },
   "files": [
     "bin",
@@ -16,6 +36,9 @@
     "pyproject.toml",
     "README.md"
   ],
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
   "engines": {
     "node": ">=16"
   },
@@ -24,18 +47,5 @@
     "darwin",
     "linux"
   ],
-  "preferGlobal": true,
-  "license": "MIT",
-  "author": "Reid",
-  "keywords": [
-    "cli",
-    "agent",
-    "ai",
-    "reidcli",
-    "terminal"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/ryyReid/ReidCLI.git"
-  }
+  "preferGlobal": true
 }
