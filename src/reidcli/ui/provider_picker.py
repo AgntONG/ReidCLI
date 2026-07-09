@@ -255,6 +255,7 @@ class ProviderPicker:
         self.show_custom_form = False
         self.custom_form: Optional[CustomProviderForm] = None
         self._anim_start = time.time()
+        self._app: Application | None = None
 
         self._build_ui()
         self._build_key_bindings()
@@ -480,22 +481,26 @@ class ProviderPicker:
             self.on_custom(values)
             self.show_custom_form = False
             self.custom_form = None
-            event.app.invalidate()
+            if self._app:
+                self._app.invalidate()
 
         def on_cancel() -> None:
             self.show_custom_form = False
             self.custom_form = None
-            event.app.invalidate()
+            if self._app:
+                self._app.invalidate()
 
         self.custom_form = CustomProviderForm(on_submit, on_cancel)
         self.frame.body = self.custom_form.container
-        event.app.layout.focus(self.custom_form.buffers["name"])
+        if self._app:
+            self._app.layout.focus(self.custom_form.buffers["name"])
 
     def _hide_custom_form(self) -> None:
         self.show_custom_form = False
         self.custom_form = None
         self._build_ui()
-        event.app.layout.focus(self.search_buffer)
+        if self._app:
+            self._app.layout.focus(self.search_buffer)
 
     def run(self) -> None:
         app = Application(
@@ -505,6 +510,7 @@ class ProviderPicker:
             full_screen=True,
             mouse_support=True,
         )
+        self._app = app
         app.run()
 
 
