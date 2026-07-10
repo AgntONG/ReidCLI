@@ -529,7 +529,11 @@ class ChatApp:
     # --- rendering bridge --------------------------------------------------
 
     def _append_output(self, fn: Callable[[], None]) -> None:
-        fn()
+        try:
+            fn()
+        except Exception as e:
+            from reidcli.ui import render
+            render.print_error(f"Error: {e}")
         self.output.append_static(self.capture.drain())
         if self.app.is_running:
             self.app.invalidate()
@@ -830,12 +834,11 @@ class ChatApp:
                 self._cancel_event.set()
 
         @kb.add("c-c")
-        def _clear_line(event) -> None:  # type: ignore[no-untyped-def]
-            if self._buf.text:
-                self._buf.reset()
+        def _exit(event) -> None:  # type: ignore[no-untyped-def]
+            self.app.exit(result=0)
 
         @kb.add("c-d")
-        def _exit(event) -> None:  # type: ignore[no-untyped-def]
+        def _exit_alt(event) -> None:  # type: ignore[no-untyped-def]
             self.app.exit(result=0)
 
         @kb.add("c-o")
@@ -983,6 +986,8 @@ class ChatApp:
         except Exception as exc:  # noqa: BLE001 - the TUI must not die on runtime errors
             log.exception("deepreid failed")
             error_text = str(exc)
+            if len(error_text) > 500:
+                error_text = error_text[:500] + "\n... (truncated)"
             self._append_output(lambda: render.print_error(error_text))
         else:
             path = save_deepreid_result(self.orchestrator.config, result)
@@ -1027,6 +1032,9 @@ class ChatApp:
         except Exception as exc:  # noqa: BLE001 - the TUI must not die on runtime errors
             log.exception("turn failed")
             error_text = str(exc)
+            # Truncate overly verbose error messages (common with invalid API keys)
+            if len(error_text) > 500:
+                error_text = error_text[:500] + "\n... (truncated)"
             self._append_output(lambda: render.print_error(error_text))
         else:
             seconds = int(time.monotonic() - self._thinking["start"])
@@ -1046,7 +1054,12 @@ class ChatApp:
 
         def _do() -> None:
             nonlocal outcome
-            outcome = handle_command(self.orchestrator, text)
+            try:
+                outcome = handle_command(self.orchestrator, text)
+            except Exception as e:
+                from reidcli.ui import render
+                render.print_error(f"Command error: {e}")
+                outcome = "continue"
 
         self._append_output(_do)
         return outcome

@@ -95,9 +95,16 @@ class ProviderEntry:
 
 def _build_entries() -> List[ProviderEntry]:
     entries = []
+    seen: set[tuple[str, str]] = set()
     for name, kind, base_url, default_model, description in POPULAR_PROVIDERS:
+        key = (kind, base_url)
+        if key in seen:
+            continue
+        seen.add(key)
+        # Derive a clean provider name from the first entry for this kind/base_url
+        provider_name = name.split(" — ")[0] if " — " in name else name
         entries.append(ProviderEntry(
-            name=name,
+            name=provider_name,
             kind=kind,
             base_url=base_url,
             default_model=default_model,
@@ -451,7 +458,7 @@ class ProviderPicker:
             )
 
             field_window = Window(
-                content=BufferControl(buffer=self.custom_buffers[field_id], focusable=True, password=is_password),
+                content=BufferControl(buffer=self.custom_buffers[field_id], focusable=True),
                 height=1,
                 style="class:picker-search",
             )
@@ -501,7 +508,7 @@ class ProviderPicker:
 
         return root
 
-    def run(self) -> None:
+    async def run_async(self) -> None:
         root = self._build_container()
         app = Application(
             layout=Layout(root, focused_element=self.search_buffer),
@@ -512,7 +519,7 @@ class ProviderPicker:
         )
         self._app = app
         try:
-            app.run()
+            await app.run_async()
         except (EOFError, KeyboardInterrupt):
             self.on_cancel()
 
@@ -522,5 +529,22 @@ def pick_provider(
     on_custom: Callable[[dict], None],
     on_cancel: Callable[[], None],
 ) -> None:
-    picker = ProviderPicker(on_select, on_custom, on_cancel)
-    picker.run()
+    import asyncio
+    import threading
+
+    def run_picker():
+        try:
+            picker = ProviderPicker(on_select, on_custom, on_cancel)
+            asyncio.run(picker.run_async())
+        except Exception as e:
+            from reidcli.ui import render
+            render.print_error(f"Provider picker error: {e}")
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        run_picker()
+    else:
+        t = threading.Thread(target=run_picker, daemon=True)
+        t.start()
+        t.join()

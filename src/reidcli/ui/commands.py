@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Callable
@@ -449,6 +449,120 @@ def _handle_providers(orchestrator: Orchestrator) -> None:
             if name not in persisted_names:
                 extra.append(name)
     render.print_providers(persisted, active, extra)
+
+
+def _handle_connect(orchestrator: Orchestrator, arg: str) -> None:
+    arg = arg.strip()
+    if arg:
+        parts = arg.split(None, 2)
+        name = parts[0]
+        kind = parts[1] if len(parts) > 1 else "openai-compatible"
+        api_key = parts[2] if len(parts) > 2 else ""
+        if kind not in SUPPORTED_KINDS:
+            render.print_error(f"unknown kind '{kind}' (try {', '.join(SUPPORTED_KINDS)})")
+            return
+        base_url = ""
+        default_model = ""
+        if kind == "ollama":
+            base_url = "http://localhost:11434"
+            default_model = "llama3.2"
+        record = ProviderRecord(
+            name=name,
+            kind=kind,
+            base_url=base_url,
+            api_key=api_key,
+            default_model=default_model,
+        )
+        store = _providers_store(orchestrator)
+        store.save(record)
+        if orchestrator.providers is not None:
+            try:
+                orchestrator.providers.register(name, build_provider(record))
+            except (ValueError, TypeError) as exc:
+                render.print_error(f"failed to register: {exc}")
+                return
+        render.print_info(f"connected '{name}' ({kind})")
+        return
+
+    result: dict = {}
+
+    def on_select(entry: ProviderEntry) -> None:
+        result["entry"] = entry
+
+    def on_custom(values: dict) -> None:
+        result["custom"] = values
+
+    def on_cancel() -> None:
+        result["cancel"] = True
+
+    pick_provider(on_select, on_custom, on_cancel)
+
+    if result.get("cancel"):
+        return
+
+    if result.get("entry"):
+        entry: ProviderEntry = result["entry"]
+        if entry.is_custom:
+            kind = "openai-compatible"
+        elif entry.kind in SUPPORTED_KINDS:
+            kind = entry.kind
+        else:
+            kind = "openai-compatible"
+        api_key = ""
+        if kind == "ollama":
+            base_url = entry.base_url or "http://localhost:11434"
+            default_model = entry.default_model or "llama3.2"
+        else:
+            base_url = entry.base_url
+            default_model = entry.default_model
+        record = ProviderRecord(
+            name=entry.name,
+            kind=kind,
+            base_url=base_url,
+            api_key=api_key,
+            default_model=default_model,
+        )
+        store = _providers_store(orchestrator)
+        store.save(record)
+        if orchestrator.providers is not None:
+            try:
+                orchestrator.providers.register(entry.name, build_provider(record))
+            except (ValueError, TypeError) as exc:
+                render.print_error(f"failed to register: {exc}")
+                return
+        render.print_info(f"connected '{entry.name}' ({kind}) — set API key with /connect {entry.name} <kind> <key>")
+        return
+
+    if result.get("custom"):
+        values: dict = result["custom"]
+        name = (values.get("name") or "").strip()
+        if not name:
+            render.print_error("provider name is required")
+            return
+        kind = (values.get("kind") or "openai-compatible").strip()
+        if kind not in SUPPORTED_KINDS:
+            render.print_error(f"unknown kind '{kind}' (try {', '.join(SUPPORTED_KINDS)})")
+            return
+        base_url = (values.get("base_url") or "").strip()
+        api_key = (values.get("api_key") or "").strip()
+        default_model = (values.get("default_model") or "").strip()
+        record = ProviderRecord(
+            name=name,
+            kind=kind,
+            base_url=base_url,
+            api_key=api_key,
+            default_model=default_model,
+        )
+        store = _providers_store(orchestrator)
+        store.save(record)
+        if orchestrator.providers is not None:
+            try:
+                orchestrator.providers.register(name, build_provider(record))
+            except (ValueError, TypeError) as exc:
+                render.print_error(f"failed to register: {exc}")
+                return
+        render.print_info(f"connected '{name}' ({kind})")
+        return
 
 
 def _handle_disconnect(orchestrator: Orchestrator, arg: str) -> None:
